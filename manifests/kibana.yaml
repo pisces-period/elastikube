@@ -1,0 +1,67 @@
+# Kibana Configuration
+#
+# This configuration includes the following k8s resource definitions:
+#
+# 1) Service - Cluster-IP
+# 2) Deployment - kibana pod(s)
+#
+# A cluster-wide, load balancing IP provides access to Kibana pods.  
+# 
+# A deployment spawns Kibana pods in a stateless fashion.
+# All kibana pods connect to the elasticsearch cluster automatically.
+---
+# Service Definition
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-indexing-kibana
+  labels:
+    tier: indexing
+    app: kibana
+spec:
+  type: ClusterIP
+  selector:
+    tier: indexing
+    app: kibana
+  ports:
+  - protocol: TCP
+    port: 5601
+    targetPort: 5601
+
+---
+# Deployment Definition
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kibana
+  labels:
+    tier: indexing
+    app: kibana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      tier: indexing
+      app: kibana
+  template:
+    metadata:
+      labels:
+        tier: indexing
+        app: kibana
+    spec:
+      containers:
+      - name: kibana
+        image: docker.elastic.co/kibana/kibana:7.6.2
+        resources:
+          limits:
+            cpu: 1000m
+          requests:
+            cpu: 100m
+        ports:
+        - containerPort: 5601
+          protocol: TCP
+        env:
+        - name: SERVER_NAME
+          value: kibana
+        - name: ELASTICSEARCH_HOSTS
+          value: http://svc-indexing-elasticsearch:9200

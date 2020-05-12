@@ -1,0 +1,138 @@
+# Logstash Configuration
+#
+# This configuration includes the following k8s resource definitions:
+#
+# 1) Service - ClusterIP (TCP/5044 for Beats)
+# 2) Service - ClusterIP (TCP/9600 for Logstash API)
+# 3) ConfigMap - logstash settings
+# 3) Deployment - logstash pod(s)
+#
+# Cluster-wide, load-balancing IPs provide access to Logstash APIs
+# 
+# A deployment spawns Logstash pods in a stateless fashion.
+# All logstash pods connect to the elasticsearch cluster automatically.
+---
+# Service Definition (TCP/5044)
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-indexing-logstash
+  labels:
+    tier: indexing
+    app: logstash
+spec:
+  type: ClusterIP
+  selector:
+    tier: indexing
+    app: logstash
+  ports:
+  - protocol: TCP
+    port: 5044
+    targetPort: 5044
+
+---
+# Service Definition (TCP/9600)
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-indexing-logstash-api
+  labels:
+    tier: indexing
+    app: logstash
+spec:
+  type: ClusterIP
+  selector:
+    tier: indexing
+    app: logstash
+  ports:
+  - protocol: TCP
+    port: 9600
+    targetPort: 9600
+
+---
+# ConfigMap Definition
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: configmap-logstash
+  labels:
+    tier: indexing
+    app: logstash
+data:
+  logstash.conf: |-
+    input {
+      beats {
+        port => "5044"
+      }
+    }
+
+    #filter {
+    #  if [kubernetes.labels.tier] !~ "honeypot" {
+    #    drop{}
+    #  }
+    #  json {
+    #    source => "message"
+    #    skip_on_invalid_json => true
+    #  }
+    #}
+
+    output {
+      elasticsearch {
+        hosts => ["svc-indexing-elasticsearch:9200"]
+        index => "%{[@metadata][beat]}-%{+YYYY.MM.dd}"
+      }
+      stdout {
+        codec => json # for filebeat to logstash pipeline debugging
+      }
+    }
+
+---
+# Deployment Definition
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logstash
+  labels:
+    tier: indexing
+    app: logstash
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      tier: indexing
+      app: logstash
+  template:
+    metadata:
+      labels:
+        tier: indexing
+        app: logstash
+    spec:
+      volumes:
+      - name: logstash-pipeline
+        configMap:
+          name: configmap-logstash
+          defaultMode: 0644
+          items:
+          - key: logstash.conf
+            path: logstash.conf
+      containers:
+      - name: logstash
+        image: docker.elastic.co/logstash/logstash:7.6.2
+        ports:
+        - containerPort: 5044 # Beats
+          protocol: TCP
+        - containerPort: 9600 # API calls
+          protocol: TCP
+        env:
+        - name: XPACK_MONITORING_ELASTICSEARCH_HOSTS
+          value: "http://svc-indexing-elasticsearch:9200"
+        - name: HTTP_HOST
+          value: "0.0.0.0"
+        - name: PIPELINE_ID
+          value: "main"
+        - name: PATH.CONFIG
+          value: "/usr/share/logstash/pipeline"
+        volumeMounts:
+        - name: logstash-pipeline
+          mountPath: /usr/share/logstash/pipeline/
+      

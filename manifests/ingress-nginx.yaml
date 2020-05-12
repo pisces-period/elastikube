@@ -1,0 +1,38 @@
+# NGINX Ingress Configuration
+# 
+# This configuration includes the following k8s definitions:
+#
+# 1) Ingress - requires an Ingress Controller (https://kubernetes.github.io/ingress-nginx/deploy/)
+# 
+# The Ingress exposes elasticsearch and kibana services to the external world (i.e. outside Kubernetes).
+# This is essentially leveraging NGINX's reverse proxy capabilities.
+# 
+# elastic.in.k8s.in.alpha.centaurus
+# kibana.in.k8s.in.alpha.centaurus
+#
+# OBS: As a pre-requisite, the Ingress Controller (provided in the link above) needs to be running
+---
+# Ingress Definition
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+  name: ingress-nginx
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - host: elastic.in.k8s # this name must be resolvable by your DNS server 
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: svc-indexing-elasticsearch
+          servicePort: 9200
+  - host: kibana.in.k8s # this name must be resolvable by your DNS server
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: svc-indexing-kibana
+          servicePort: 5601

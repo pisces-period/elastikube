@@ -1,0 +1,140 @@
+---
+# Elasticsearch Cluster Configuration
+#
+# This configuration includes the following k8s resource definitions:
+#
+# 1) Headless Service - service auto-discovery for elasticsearch cluster members
+# 2) ConfigMap - elasticsearch cluster settings
+# 3) StatefulSet - elasticsearch cluster
+#
+# A headless service is not backed by a cluster-wide IP address load balancing pods behind it.
+# Instead, individual pods are discovered based on selected labels and then associated with endpoints.
+# 
+# The Elasticsearch cluster is a StatefulSet, and each cluster member requires direct (unproxied and
+# non load balanced) access to each other via a static, although dynamically discovered, DNS/IP record.
+---
+# Headless Service Definition
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-indexing-elasticsearch
+  labels:
+    tier: indexing
+    app: elasticsearch
+spec:
+  clusterIP: None # headless services and IPs are discovered automatically
+  selector: # service discovery is based on StatefulSet labels
+    tier: indexing
+    app: elasticsearch
+  ports:
+  - protocol: TCP
+    port: 9200 # JSON APIs
+    targetPort: 9200 # inter-node transport
+
+---
+# ConfigMap Definition
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: configmap-elasticsearch
+  labels:
+    tier: indexing
+    app: elasticsearch
+data:
+  cluster.name: "elastic-cluster"
+  discovery.seed_hosts: "elasticsearch-0.svc-indexing-elasticsearch, elasticsearch-1.svc-indexing-elasticsearch, elasticsearch-2.svc-indexing-elasticsearch"
+  cluster.initial_master_nodes: "elasticsearch-0, elasticsearch-1, elasticsearch-2"
+  ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+
+---
+# StatefulSet Definition
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  labels: # StatefulSet labels match headless service's 'selector' - endpoints are created for the pods
+    tier: indexing
+    app: elasticsearch
+spec:
+  serviceName: svc-indexing-elasticsearch # headless service backing this StatefulSet
+  replicas: 3 # how many Pods to spawn
+  updateStrategy: # update strategy
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      tier: indexing
+      app: elasticsearch
+  template: # Pod template
+    metadata: 
+      labels:
+        tier: indexing
+        app: elasticsearch
+    spec:
+      initContainers:
+      - name: fixpermissions # k8s mounts volumes as root, making it inacessible to elasticsearch
+        image: busybox:1.28
+        command: ["sh", "-c", "chown -R 1000:1000 /usr/share/elasticsearch/data"] # adjusting permissions
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: persistentvolumeclaim-elastic
+          mountPath: /usr/share/elasticsearch/data
+      containers:
+      - name: elastic # container name
+        image: docker.elastic.co/elasticsearch/elasticsearch:7.6.2 # container image
+        resources:
+          limits: # container cannot have more than
+            cpu: 1000m
+            memory: 2Gi
+          requests: # containers wants
+            cpu: 100m
+            memory: 2Gi
+        ports: # container ports to expose (to the cluster)
+        - containerPort: 9200 # 9200 - JSON APIs
+          protocol: TCP
+        - containerPort: 9300 # 9300 - inter-node transport
+          protocol: TCP
+        volumeMounts:
+        - name: persistentvolumeclaim-elastic # persistent volume claim template
+          mountPath: /usr/share/elasticsearch/data # where to mount the persistent volume claim
+        env:
+        - name: cluster.name
+          valueFrom:
+            configMapKeyRef:
+              name: configmap-elasticsearch
+              key: cluster.name
+        - name: node.name
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name # elasticsearch-0, elasticsearch-1, elasticsearch-2 etc.
+        - name: discovery.seed_hosts
+          valueFrom:
+            configMapKeyRef:
+              name: configmap-elasticsearch
+              key: discovery.seed_hosts
+        - name: cluster.initial_master_nodes
+          valueFrom:
+            configMapKeyRef:
+              name: configmap-elasticsearch
+              key: cluster.initial_master_nodes
+        - name: ES_JAVA_OPTS
+          valueFrom:
+            configMapKeyRef:
+              name: configmap-elasticsearch
+              key: ES_JAVA_OPTS
+
+  # volumeClaimTemplate is a specific spec for StatefulSets
+  # they are provisioned and claimed per-pod
+  volumeClaimTemplates:
+  - metadata:
+      name: persistentvolumeclaim-elastic
+      labels:
+        tier: indexing
+        app: elasticsearch
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: hostpath
+      resources:
+        requests:
+          storage: 50Gi
