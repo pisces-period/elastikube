@@ -28,8 +28,8 @@ spec:
     app: elasticsearch
   ports:
   - protocol: TCP
-    port: 9200 # JSON APIs
-    targetPort: 9200 # inter-node transport
+    port: 9200 # service port
+    targetPort: 9200 # container port
 
 ---
 # ConfigMap Definition

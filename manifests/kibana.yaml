@@ -38,7 +38,7 @@ metadata:
     tier: indexing
     app: kibana
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       tier: indexing
