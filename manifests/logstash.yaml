@@ -66,16 +66,6 @@ data:
       }
     }
 
-    #filter {
-    #  if [kubernetes.labels.tier] !~ "honeypot" {
-    #    drop{}
-    #  }
-    #  json {
-    #    source => "message"
-    #    skip_on_invalid_json => true
-    #  }
-    #}
-
     output {
       elasticsearch {
         hosts => ["svc-indexing-elasticsearch:9200"]
