@@ -1,4 +1,4 @@
-# Kubernetes Elastic Stack Implementation
+## Kubernetes Elastic Stack Implementation
 
 This documentation section is under construction :hammer:
 
@@ -16,7 +16,9 @@ The kubernetes manifests are the building blocks for a production-grade cluster.
 
 You can add as many Elasticsearch nodes as your kubernetes cluster can support and tweak with each component's _configmaps_ to add more advanced configuration.
 
-## Pre-Requisites
+_OBS_: This documentation explains how to publish your Elastic stack services outside your local kubernetes cluster. If you want to make it publicly available to the internet, additional configuration is needed, such as DNS registrar and firewall configuration, both of which are out of the scope of this document.
+
+### Pre-Requisites
 
 - a fully-functional kubernetes cluster (v1.16+)
 - 1x DNS record for Kibana Web Interface (_kibana.in.k8s_)
@@ -24,9 +26,9 @@ You can add as many Elasticsearch nodes as your kubernetes cluster can support a
 - NGINX Ingress Controller (instructions to deploy one [here](https://kubernetes.github.io/ingress-nginx/deploy/))
 
 
-## How To Use This Repo
+### How To Use This Repo
 
-To  implement the Elastic stack on Kubernetes, follow the steps described further below.
+To implement the Elastic stack on Kubernetes, follow the steps described further below.
 
 #### 1. Configuring Web Access URLs
 
@@ -36,23 +38,17 @@ __ADD__ the following lines to your `/etc/hosts` file:
 127.0.0.1	kibana.in.k8s
 ```
 
+The loopback IP address of your localhost now 'understands' these names.
+
 If you wish to use different names, check out the _customizing Web Access URLs_ section.
+
+If your DNS server is already configured to resolve these names, you might skip this step. You can also use different IP addresses, as long as they point to your kubernetes cluster.
 
 #### 2. Applying the Kubernetes Configuration
 
-You have 2 options to apply the configuration to your kubernetes cluster:
-
-1) Clone GitHub Repo:
-
 Clone this repo and then run the following command at the root of the project:
 
-`kubectl apply -f manifests/`
-
-2) Run via HTTPS:
-
-Simply run the command:
-
-`kubectl apply -f https://${URL}/`
+`kubectl create -f manifests/`  
 
 Run `kubectl get po` and you should see the an output similar to this:
 
@@ -123,9 +119,9 @@ Click on the `compass` icon on the top-left corner of the screen to see logs cor
 
 If you do not see it, proceed to _troubleshooting_ section.
 
-### Customizing URLs
+### Customizing Web Access URLs
 
-If you want to customize the Web Access URLs, it is easier if you download this repo. Make sure you have downloaded the repo, edit your `/etc/hosts` file with appropriate names of your choosing, then navigate to the folder where you downloaded the repo, open the `manifests/ingress-nginx.yaml` file and change the following lines to match the new names:
+If you want to customize the Web Access URLs, make sure you have downloaded the repo, edit your `/etc/hosts` file with appropriate names of your choosing, then navigate to the folder where you downloaded the repo, open the `manifests/ingress-nginx.yaml` file and change the following lines to match the new names:
 
 ```
 <omitted>
@@ -136,8 +132,8 @@ If you want to customize the Web Access URLs, it is easier if you download this 
 
 Then, redeploy the ingress:
 
-`kubectl delete -f manifests/ingress-nginx.yaml`
-`kubectl create -f manifests/ingress-nginx.yaml`
+`kubectl delete -f manifests/ingress-nginx.yaml`  
+`kubectl create -f manifests/ingress-nginx.yaml`  
 
 That's it. =) 
 
@@ -147,5 +143,57 @@ You don't need to update the name anywhere else in the code.
 
 This section is under construction.
 
+#### Elasticsearch
 
+##### Pod Stuck in Pending Status
 
+```
+NAME                        READY   STATUS              RESTARTS   AGE
+elasticsearch-0             0/1     Pending             0          45s
+```
+
+This is usually due to insufficient memory.
+
+Run `kubectl describe pod ${elasticsearch-[0...n]` to make sure that is indeed the case and look under the _Events_ section.
+
+Free up memory and try to redeploy the cluster. If you are running Docker-for-Desktop on Windows or Mac, check the memory limit settings.
+
+##### Cluster Health Issues
+
+If the cluster health command does not return the expected number of nodes in green status, run the following command (for each node in the cluster):
+
+`kubectl logs ${elasticsearch_[0...n]}`  
+
+Scan through the logs to find the probable reason why the cluster is not running as it should.
+
+Regardless if Kibana and Logstash are indeed sending logs to Elasticsearch, the cluster health request should return a satisfactory response.
+
+Again, this is probably due to one or more nodes not starting due to insufficient memory. See _pod stuck in pending status_.
+
+#### Kibana
+
+If you do not see the filebeat index in Kibana, chances are that something is wrong with either filebeat or logstash pipelines.
+
+If you edited filebeat's configmap, you might find that your logstash is not sending logs to Elasticsearch. 
+
+Often times, the issue is _filebeat.yml_ configuration. This file is rather flimsy and does not always notify you of linting issues or mispelled sections in your filebeat configuration. Instead, filebeat rolls back to default configuration, which can be quite frustrating since it does not leave any hint or trace of this in the logs.
+
+In any case, round up the usual suspects by running the following commands:
+
+`kubectl logs ${filebeat_pod}`  
+`kubectl logs ${logstash_pod}`  
+
+Scan through the log files and see if there is any hint as to what could be the issue. If not, review your filebeat configuration __VERY__ carefully. A simple mispelling such as `contain` instead of `contains` in the _condition_ stanza could throw you off, because filebeat would simply ignore your conditions rather than notify you about them. 
+
+For further information, please read the [filebeat](https://www.elastic.co/guide/en/beats/filebeat/current/filebeat-configuration.html) configuration documentation.
+
+In logstash, try to find the following lines:
+
+```
+[2020-05-29T14:19:26,182][INFO ][logstash.agent           ] Pipelines running {:count=>2, :running_pipelines=>[:".monitoring-logstash", :main], :non_running_pipelines=>[]}
+[2020-05-29T14:19:26,531][INFO ][logstash.agent           ] Successfully started Logstash API endpoint {:port=>9600}
+```
+
+The '2' count for number of loaded pipelines refers to the default pipeline which is configured as part of the kubernetes deployment, and the xpack monitoring pipeline, which runs by default on this distro of Elasticsearch.
+
+If logstash is running both pipelines, then the issue is filebeat.
